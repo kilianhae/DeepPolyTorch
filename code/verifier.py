@@ -1,6 +1,6 @@
 import argparse
 import torch
-from code.deeppoly import DeepPoly
+from deeppoly import DeepPoly
 
 from networks import get_network
 from utils.loading import parse_spec
@@ -12,7 +12,7 @@ def analyze(
     net: torch.nn.Module, inputs: torch.Tensor, eps: float, true_label: int
 ) -> bool:
     
-    verifier = DeepPoly(net.modules(), true_label=true_label)
+    verifier = DeepPoly(net, true_label=true_label)
 
     lb, ub = verifier(inputs, eps)
 

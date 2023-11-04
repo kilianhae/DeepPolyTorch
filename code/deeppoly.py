@@ -4,14 +4,20 @@ import torch
 
 # we design deeppoly to be input/output agnostic but rather just specific to the model TODO not sure if thats the right way to go
 class DeepPoly():
-    def __init__(self, model: torch.nn.Module, true_label: int) -> None:
+    def __init__(self, model: torch.nn.Sequential, true_label: int):
         self.verifiers = [] # type: list[Verifier]
         self.input_verifier = InputVerifier(None, None)
-        
-        for module in model.modules():
+        self.verifiers.append(self.input_verifier)
+
+        for module in model:
             if isinstance(module, torch.nn.Linear):
                 self.verifiers.append(LinearVerifier(module, self.verifiers[-1], None))
+            if isinstance(module, torch.nn.ReLU):
+                self.verifiers.append(ReluVerifier(self.verifiers[-1], None))
+            if isinstance(module, torch.nn.Flatten):
+                self.verifiers.append(FlattenVerifier(self.verifiers[-1], None))
             else:
+                print(module)
                 raise NotImplementedError
             if len(self.verifiers) > 1:
                 self.verifiers[-2].next = self.verifiers[-1]
@@ -27,6 +33,7 @@ class DeepPoly():
 
         self.input_verifier.set_init_box(lb_in, ub_in)
         lb, ub = self.input_verifier.forward()
+        return lb, ub
         # we need to check if the true label is within the bounds
 
 class Bound():
