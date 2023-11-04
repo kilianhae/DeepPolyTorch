@@ -4,7 +4,7 @@ import torch
 
 # we design deeppoly to be input/output agnostic but rather just specific to the model TODO not sure if thats the right way to go
 class DeepPoly():
-    def __init__(self, model: torch.nn.Module) -> None:
+    def __init__(self, model: torch.nn.Module, true_label: int) -> None:
         self.verifiers = [] # type: list[Verifier]
         self.input_verifier = InputVerifier(None, None)
         
@@ -18,7 +18,7 @@ class DeepPoly():
         
         self.input_verifier.next = self.verifiers[0]
 
-    def forward(self, x: torch.Tensor, eps: float, true_label: int):
+    def forward(self, x: torch.Tensor, eps: float):
         # this method runs the whole deeploly scheme and returns wether we are correct or not
         # x is a batch of a single sample
         # y is a tensor containing single element (the target of the sample x)
