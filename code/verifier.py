@@ -1,5 +1,6 @@
 import argparse
 import torch
+from code.deeppoly import DeepPoly
 
 from networks import get_network
 from utils.loading import parse_spec
@@ -10,6 +11,16 @@ DEVICE = "cpu"
 def analyze(
     net: torch.nn.Module, inputs: torch.Tensor, eps: float, true_label: int
 ) -> bool:
+    
+    verifier = DeepPoly(net.modules(), true_label=true_label)
+
+    lb, ub = verifier(inputs, eps)
+
+    verify_test = lb[true_label] - ub
+    verify_test[true_label] = 1
+    if verify_test.min() > 0:
+        return 1  # We verified the image
+
     return 0
 
 
