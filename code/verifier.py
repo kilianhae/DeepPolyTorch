@@ -12,12 +12,15 @@ def analyze(
     net: torch.nn.Module, inputs: torch.Tensor, eps: float, true_label: int
 ) -> bool:
     
+    net.zero_grad()
+    
     verifier = DeepPoly(net, true_label=true_label)
 
     lb, ub = verifier.forward(inputs, eps)
 
     verify_test = lb[true_label] - ub
     verify_test[true_label] = 1
+    print(verify_test.min())
     if verify_test.min() > 0:
         return 1  # We verified the image
 
