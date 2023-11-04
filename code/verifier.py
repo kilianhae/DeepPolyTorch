@@ -14,7 +14,7 @@ def analyze(
     
     verifier = DeepPoly(net, true_label=true_label)
 
-    lb, ub = verifier(inputs, eps)
+    lb, ub = verifier.forward(inputs, eps)
 
     verify_test = lb[true_label] - ub
     verify_test[true_label] = 1

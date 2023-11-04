@@ -10,11 +10,12 @@ class DeepPoly():
         self.verifiers.append(self.input_verifier)
 
         for module in model:
+            print(isinstance(module, torch.nn.Linear))
             if isinstance(module, torch.nn.Linear):
                 self.verifiers.append(LinearVerifier(module, self.verifiers[-1], None))
-            if isinstance(module, torch.nn.ReLU):
+            elif isinstance(module, torch.nn.ReLU):
                 self.verifiers.append(ReluVerifier(self.verifiers[-1], None))
-            if isinstance(module, torch.nn.Flatten):
+            elif isinstance(module, torch.nn.Flatten):
                 self.verifiers.append(FlattenVerifier(self.verifiers[-1], None))
             else:
                 print(module)
@@ -22,7 +23,7 @@ class DeepPoly():
             if len(self.verifiers) > 1:
                 self.verifiers[-2].next = self.verifiers[-1]
         
-        self.input_verifier.next = self.verifiers[0]
+        self.input_verifier.next = self.verifiers[1]
 
     def forward(self, x: torch.Tensor, eps: float):
         # this method runs the whole deeploly scheme and returns wether we are correct or not
@@ -72,7 +73,7 @@ class InputVerifier(Verifier):
         self.ub = ub
 
     def forward(self):
-        return self.next.forward(self.lb, self.ub)
+        return self.next.forward()
     
     def backward(self, bound: Bound):
         """
@@ -172,12 +173,12 @@ class FlattenVerifier(Verifier):
         Then propagates the bounds to the previous layer.
         """
 
-        bound.ub_bias = torch.reshape(bound.ub_bias, self.previous.ub.size())
-        bound.lb_bias = torch.reshape(bound.lb_bias, self.previous.ub.size())
+        bound.ub_bias = torch.reshape(bound.ub_bias, tuple(dim for dim in self.previous.ub.size()))
+        bound.lb_bias = torch.reshape(bound.lb_bias, tuple(dim for dim in self.previous.ub.size()))
         # bias was of size eg: 100 x 1 but now we need it to be: 10 x 10 x 1
         # previous ub is of size 10 x 10 x 1
-
-        bound.ub_mult = torch.reshape(bound.ub_mult, torch.concatenate((torch.tensor(self.previous.ub.size()),torch.tensor(self.previous.ub.size())),dim=0))
-        bound.lb_mult = torch.reshape(bound.lb_mult, torch.concatenate((torch.tensor(self.previous.ub.size()),torch.tensor(self.previous.ub.size())),dim=0))
+        print(bound.ub_mult.size())
+        bound.ub_mult = torch.reshape(bound.ub_mult, tuple(dim for dim in torch.concatenate((torch.tensor(self.previous.ub.size()),torch.tensor(self.previous.ub.size())),dim=0)))
+        bound.lb_mult = torch.reshape(bound.lb_mult, tuple(dim for dim in torch.concatenate((torch.tensor(self.previous.ub.size()),torch.tensor(self.previous.ub.size())),dim=0)))
         # MULT was of size eg: 100 x 100 but we need it to be 10 x 10 x 10 x 10
         self.previous.backward(bound)
