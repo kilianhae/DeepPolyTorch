@@ -1,4 +1,4 @@
-from abc import ABC, abstractmethod
+from abc import ABC
 from typing import Optional
 import torch
 
@@ -40,14 +40,15 @@ class Verifier(ABC):
     def __init__(self, lb=None, ub=None, previous=None, next=None) -> None:
         self.lb = lb # type: Optional[torch.Tensor]
         self.ub = ub # type: Optional[torch.Tensor]
-        self.previous = previous
-        self.next = next
+        self.previous = previous # type: Optional[Verifier]
+        self.next = next # type: Optional[Verifier]
 
     def forward(self): # not sure if float as input is true
         # sets the current uc and lb
         # calls the next forward method and returns the bounds of the output (the final layer)
         # calls the backward and based on that sets the lb and ub of the input
         pass
+
     def backward(self, bound: Bound):
         # uc: expects to get a tensor of tensors. Each tensor corresponds to the algebraic expression of the upper bound of a output neuron (from where the backward was started). Therefore the element t_i is the mult. const in the upper bound of the output neuron i of the current layer
         # lc: expects to get a tensor of tensors. Each tensor corresponds to the algebraic expression of the lower bound of a output neuron (from where the backward was started). Therefore the element t_i is the mult. const in the lower bound of the output neuron i of the current layer
@@ -78,7 +79,6 @@ class InputVerifier(Verifier):
         bound.lb_mult = torch.zeros_like(bound.ub_mult)
 
 
-    
 class LinearVerifier(Verifier):
     """
     Initiliazid in the forward method of a Transformer and passed backwards until the input variables at each step changing its algebraic representation.
@@ -99,7 +99,8 @@ class LinearVerifier(Verifier):
     
     def backward(self, bound: Bound):
         """
-        Input is a Bound object that represents the algebraic bounds of the initializing layer w.r.t. to the output neurons of the current layer. So the contents are tensors of the shape: Tensor: number of out-neurons in initializing layer x number of out-neurons in current layer
+        Input is a Bound object that represents the algebraic bounds of the initializing layer w.r.t. to the output neurons of the 
+        current layer. So the contents are tensors of the shape: Tensor: number of out-neurons in initializing layer x number of out-neurons in current layer
         Recomputes the bounds so that it represents the algebraic bounds of the initializing layer w.r.t. to the output neurons of the previous layer.
         Then propagates the bounds to the previous layer.
         """
@@ -109,7 +110,7 @@ class LinearVerifier(Verifier):
         bound.ub_mult = bound.ub_mult @ self.layer.weight
         bound.lb_mult = bound.lb_mult @ self.layer.weight
 
-        self.previous.backward(bound)  
+        self.previous.backward(bound)
 
 class ReluVerifier(Verifier):
     """
@@ -139,4 +140,37 @@ class ReluVerifier(Verifier):
         bound.ub_mult = self.slope * bound.ub_mult
         bound.lb_mult = 0 * bound.lb_bias
 
+        self.previous.backward(bound)
+
+class FlattenVerifier(Verifier):
+    """
+    Initiliazid in the forward method of a Transformer and passed backwards until the input variables at each step changing its algebraic representation.
+    """
+    def __init__(self, previous: Optional[Verifier], next: Optional[Verifier]):
+        super().__init__(previous=previous,next=next)
+
+    def forward(self):
+        # here first we have to compute
+        lb, ub = self.previous.lb, self.previous.ub
+        bound = Bound(torch.eye(torch.flatten(ub).size(0)), torch.eye(torch.flatten(ub).size(0)), torch.zeros(torch.flatten(ub).size(0)), torch.zeros(torch.flatten(ub).size(0)))
+        self.backward(bound)
+        self.ub = bound.ub_bias
+        self.lb = bound.lb_bias
+        return self.next.forward()
+    
+    def backward(self, bound: Bound):
+        """
+        Input is a Bound object that represents the algebraic bounds of the initializing layer w.r.t. to the output neurons of the current layer. So the contents are tensors of the shape: Tensor: number of out-neurons in initializing layer x number of out-neurons in current layer
+        Recomputes the bounds so that it represents the algebraic bounds of the initializing layer w.r.t. to the output neurons of the previous layer.
+        Then propagates the bounds to the previous layer.
+        """
+
+        bound.ub_bias = torch.reshape(bound.ub_bias, self.previous.ub.size())
+        bound.lb_bias = torch.reshape(bound.lb_bias, self.previous.ub.size())
+        # bias was of size eg: 100 x 1 but now we need it to be: 10 x 10 x 1
+        # previous ub is of size 10 x 10 x 1
+
+        bound.ub_mult = torch.reshape(bound.ub_mult, torch.concatenate((torch.tensor(self.previous.ub.size()),torch.tensor(self.previous.ub.size())),dim=0))
+        bound.lb_mult = torch.reshape(bound.lb_mult, torch.concatenate((torch.tensor(self.previous.ub.size()),torch.tensor(self.previous.ub.size())),dim=0))
+        # MULT was of size eg: 100 x 100 but we need it to be 10 x 10 x 10 x 10
         self.previous.backward(bound)
