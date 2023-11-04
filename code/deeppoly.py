@@ -76,7 +76,6 @@ class InputVerifier(Verifier):
         bound.lb_bias = bound.lb_bias + torch.where(bound.lb_mult>0, bound.lb_mult*self.lb, bound.lb_mult*self.ub)
         bound.ub_mult = torch.zeros_like(bound.ub_mult)
         bound.lb_mult = torch.zeros_like(bound.ub_mult)
-        return bound
 
 
     
@@ -91,12 +90,13 @@ class LinearVerifier(Verifier):
     def forward(self):
         # here first we have to compute
         lb, ub = self.previous.lb, self.previous.ub
-        bound = Bound(torch.eye(self.layer.weight.size(0)), torch.eye(self.layer.weight.size(0)), 0, 0)
+        bound = Bound(torch.eye(self.layer.weight.size(0)), torch.eye(self.layer.weight.size(0)), torch.zeros(ub.size(0)), torch.zeros(ub.size(0)))
         #bound = Bound(torch.tensor(self.layer.weight), torch.tensor(self.layer.weight), torch.tensor(self.layer.bias), torch.tensor(self.layer.bias))
         self.backward(bound)
         self.ub = bound.ub_bias
         self.lb = bound.lb_bias
         return self.next.forward()
+    
     def backward(self, bound: Bound):
         """
         Input is a Bound object that represents the algebraic bounds of the initializing layer w.r.t. to the output neurons of the current layer. So the contents are tensors of the shape: Tensor: number of out-neurons in initializing layer x number of out-neurons in current layer
@@ -109,8 +109,7 @@ class LinearVerifier(Verifier):
         bound.ub_mult = bound.ub_mult @ self.layer.weight
         bound.lb_mult = bound.lb_mult @ self.layer.weight
 
-        return self.previous.backward(bound)
-    
+        self.previous.backward(bound)  
 
 class ReluVerifier(Verifier):
     """
@@ -122,17 +121,22 @@ class ReluVerifier(Verifier):
     def forward(self):
         # here first we have to compute
         lb, ub = self.previous.lb, self.previous.ub
-        slope = ub/(ub-lb)
+        self.slope = ub/(ub-lb)
+        bound = Bound(torch.eye(ub.size(0)), torch.eye(ub.size(0)), torch.zeros(ub.size(0)), torch.zeros(ub.size(0)))
         self.backward(bound)
         self.ub = bound.ub_bias
         self.lb = bound.lb_bias
-        return self.next.forward(self.lb, self.ub)
+        return self.next.forward()
     
-    def backward(self):
+    def backward(self, bound: Bound):
         """
         Input is a Bound object that represents the algebraic bounds of the initializing layer w.r.t. to the output neurons of the current layer. So the contents are tensors of the shape: Tensor: number of out-neurons in initializing layer x number of out-neurons in current layer
         Recomputes the bounds so that it represents the algebraic bounds of the initializing layer w.r.t. to the output neurons of the previous layer.
         Then propagates the bounds to the previous layer.
         """
+        bound.ub_bias = - self.slope * self.previous.ub
+        bound.lb_bias = 0 * bound.lb_bias
+        bound.ub_mult = self.slope * bound.ub_mult
+        bound.lb_mult = 0 * bound.lb_bias
 
-
+        self.previous.backward(bound)
