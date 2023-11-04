@@ -81,8 +81,11 @@ class InputVerifier(Verifier):
         Recomputes the bounds so that it represents the algebraic bounds of the initializing layer w.r.t. to the output neurons of the previous layer.
         Here we dont have to backprop to the previous layer but rather we set all multiplicates to 0 and return the numerical bounds stored in the Bias attribute of the bound.
         """
-        bound.ub_bias = bound.ub_bias + torch.where(bound.ub_mult>0, bound.ub_mult*self.ub, bound.ub_mult*self.lb)
-        bound.lb_bias = bound.lb_bias + torch.where(bound.lb_mult>0, bound.lb_mult*self.lb, bound.lb_mult*self.ub)
+        print(bound.ub_bias.size())
+        print(bound.lb_bias.size())
+        print(torch.where(bound.ub_mult>0, bound.ub_mult*self.ub, bound.ub_mult*self.lb).sum(dim=tuple(range(1,bound.ub_mult.dim()))).size())
+        bound.ub_bias = bound.ub_bias + torch.where(bound.ub_mult>0, bound.ub_mult*self.ub, bound.ub_mult*self.lb).sum(dim=tuple(range(1,bound.ub_mult.dim())))
+        bound.lb_bias = bound.lb_bias + torch.where(bound.ub_mult>0, bound.ub_mult*self.ub, bound.ub_mult*self.lb).sum(dim=tuple(range(1,bound.ub_mult.dim())))
         bound.ub_mult = torch.zeros_like(bound.ub_mult)
         bound.lb_mult = torch.zeros_like(bound.ub_mult)
 
@@ -112,7 +115,6 @@ class LinearVerifier(Verifier):
         Recomputes the bounds so that it represents the algebraic bounds of the initializing layer w.r.t. to the output neurons of the previous layer.
         Then propagates the bounds to the previous layer.
         """
-
         bound.ub_bias = bound.ub_mult @ self.layer.bias
         bound.lb_bias = bound.lb_mult @ self.layer.bias
         bound.ub_mult = bound.ub_mult @ self.layer.weight
@@ -144,9 +146,9 @@ class ReluVerifier(Verifier):
         Then propagates the bounds to the previous layer.
         """
         bound.ub_bias = - self.slope * self.previous.ub
-        bound.lb_bias = 0 * bound.lb_bias
+        bound.lb_bias = 0 * self.previous.lb
         bound.ub_mult = self.slope * bound.ub_mult
-        bound.lb_mult = 0 * bound.lb_bias
+        bound.lb_mult = 0 *  bound.lb_mult
 
         self.previous.backward(bound)
 
@@ -172,13 +174,16 @@ class FlattenVerifier(Verifier):
         Recomputes the bounds so that it represents the algebraic bounds of the initializing layer w.r.t. to the output neurons of the previous layer.
         Then propagates the bounds to the previous layer.
         """
-
-        bound.ub_bias = torch.reshape(bound.ub_bias, tuple(dim for dim in self.previous.ub.size()))
-        bound.lb_bias = torch.reshape(bound.lb_bias, tuple(dim for dim in self.previous.ub.size()))
+        # print(bound.ub_bias.size())
+        # print(tuple(dim for dim in self.previous.ub.size()))
+        # bound.ub_bias = torch.reshape(bound.ub_bias, tuple(dim for dim in self.previous.ub.size()))
+        # bound.lb_bias = torch.reshape(bound.lb_bias, tuple(dim for dim in self.previous.ub.size()))
         # bias was of size eg: 100 x 1 but now we need it to be: 10 x 10 x 1
         # previous ub is of size 10 x 10 x 1
+        print(bound.lb_mult.size())
+
+        bound.ub_mult = torch.reshape(bound.ub_mult, tuple(dim for dim in torch.concatenate((torch.tensor(bound.ub_mult.size(0))[None],torch.tensor(self.previous.ub.size())),dim=0)))
+        bound.lb_mult = torch.reshape(bound.lb_mult, tuple(dim for dim in torch.concatenate((torch.tensor(bound.lb_mult.size(0))[None],torch.tensor(self.previous.lb.size())),dim=0)))
         print(bound.ub_mult.size())
-        bound.ub_mult = torch.reshape(bound.ub_mult, tuple(dim for dim in torch.concatenate((torch.tensor(self.previous.ub.size()),torch.tensor(self.previous.ub.size())),dim=0)))
-        bound.lb_mult = torch.reshape(bound.lb_mult, tuple(dim for dim in torch.concatenate((torch.tensor(self.previous.ub.size()),torch.tensor(self.previous.ub.size())),dim=0)))
         # MULT was of size eg: 100 x 100 but we need it to be 10 x 10 x 10 x 10
         self.previous.backward(bound)
