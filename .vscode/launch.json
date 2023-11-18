@@ -1,0 +1,39 @@
+{
+    // Use IntelliSense to learn about possible attributes.
+    // Hover to view descriptions of existing attributes.
+    // For more information, visit: https://go.microsoft.com/fwlink/?linkid=830387
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "Python: conv.py",
+            "type": "python",
+            "request": "launch",
+            "program": "${file}",
+            "args": [
+                "--net", "conv_base",
+                "--spec", "test_cases/conv_base/img0_mnist_0.0707.txt"
+            ],
+            "console": "integratedTerminal",
+            "justMyCode": true
+        },
+        {
+            "name": "Python: fc.py",
+            "type": "python",
+            "request": "launch",
+            "program": "code/verifier.py",
+            "args": [
+                "--net", "fc_1",
+                "--spec", "test_cases/fc_1/img2_mnist_0.0692.txt"
+            ],
+            "console": "integratedTerminal",
+            "justMyCode": true
+        },
+        {
+            "name": "Python: Module",
+            "type": "python",
+            "request": "launch",
+            "module": "enter-your-module-name",
+            "justMyCode": true
+        }
+    ]
+}

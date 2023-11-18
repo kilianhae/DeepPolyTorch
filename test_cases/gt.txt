@@ -3,15 +3,15 @@ conv_base,img1_mnist_0.0014.txt,verified
 conv_base,img2_mnist_0.0494.txt,verified
 conv_base,img3_mnist_0.1240.txt,verified
 conv_base,img4_mnist_0.0458.txt,verified
-fc_base,img0_mnist_0.2456.txt,not verified
-fc_base,img1_mnist_0.0044.txt,verified
-fc_base,img2_mnist_0.0784.txt,verified
-fc_base,img3_mnist_0.0126.txt,verified
-fc_base,img4_mnist_0.0369.txt,verified
-fc_1,img0_mnist_0.1394.txt,not verified
-fc_1,img2_mnist_0.0692.txt,verified
-fc_2,img0_mnist_0.1086.txt,not verified
-fc_2,img3_mnist_0.0639.txt,verified
+fc_base,img0_mnist_0.2456.txt,not verified, passed 
+fc_base,img1_mnist_0.0044.txt,verified, passed 
+fc_base,img2_mnist_0.0784.txt,verified, passed 
+fc_base,img3_mnist_0.0126.txt,verified, passed 
+fc_base,img4_mnist_0.0369.txt,verified, passed 
+fc_1,img0_mnist_0.1394.txt,not verified, passed 
+fc_1,img2_mnist_0.0692.txt,verified, passed 
+fc_2,img0_mnist_0.1086.txt,not verified, passed 
+fc_2,img3_mnist_0.0639.txt,verified, not passed aka not tight enough since we pass with 0.05 epsilon
 fc_3,img0_mnist_0.1016.txt,not verified
 fc_3,img4_mnist_0.0780.txt,verified
 fc_4,img0_mnist_0.2096.txt,not verified
