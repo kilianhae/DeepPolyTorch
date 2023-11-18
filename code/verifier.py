@@ -18,13 +18,12 @@ def analyze(
 
     lb, ub = verifier.forward(inputs, eps)
 
-    verify_test = lb[true_label] - ub
-    verify_test[true_label] = 1
-    print(verify_test.min())
-    if verify_test.min() > 0:
-        return 1  # We verified the image
+    print(lb)
+    print(ub)
+    if lb.min() < 0:
+        return 0  # We verified the image
 
-    return 0
+    return 1
 
 
 def main():
