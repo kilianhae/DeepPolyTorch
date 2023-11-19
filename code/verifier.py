@@ -21,9 +21,9 @@ def analyze(
     print(bound.lb)
     print(bound.ub)
     if bound.lb.min() < 0:
-        return 0  # We verified the image
+        return False  # We verified the image
 
-    return 1
+    return True
 
 
 def main():
