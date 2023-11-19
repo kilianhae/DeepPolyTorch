@@ -57,11 +57,16 @@ class DeepPoly(torch.nn.Module):
         input_bound = Bound(ub=ub_in,lb=lb_in)
 
         ## Optimization:
+        lowest=-1
         if len(list(self.verifiers.parameters())) != 0 :
             opt = torch.optim.Adam(self.verifiers.parameters(), lr=1.5)
-            for i in range(0,40):
+            for i in range(0,100):
                 opt.zero_grad()
                 final_bound = self.verifiers.forward(input_bound)
+                if lowest >= 0:
+                    print("stopped at iteration: ", i)
+                    break
+                lowest = torch.min(final_bound.lb)
                 loss = torch.sum(- final_bound.lb)
                 loss.backward()
                 opt.step()
