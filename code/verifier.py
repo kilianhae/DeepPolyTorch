@@ -16,11 +16,11 @@ def analyze(
     
     verifier = DeepPoly(net, true_label=true_label)
 
-    lb, ub = verifier.forward(inputs, eps)
+    bound = verifier.forward(inputs, eps)
 
-    print(lb)
-    print(ub)
-    if lb.min() < 0:
+    print(bound.lb)
+    print(bound.ub)
+    if bound.lb.min() < 0:
         return 0  # We verified the image
 
     return 1

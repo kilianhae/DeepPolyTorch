@@ -2,6 +2,18 @@ from abc import ABC
 from typing import Optional
 import torch
 
+class AlgebraicBound():
+    def __init__(self, ub_mult: torch.Tensor, lb_mult: torch.Tensor, ub_bias: torch.Tensor, lb_bias: torch.Tensor) -> None:
+        self.ub_mult = ub_mult
+        self.lb_mult = lb_mult
+        self.ub_bias = ub_bias
+        self.lb_bias = lb_bias
+
+class Bound():
+    def __init__(self, ub: torch.Tensor, lb: torch.Tensor) -> None:
+        self.ub = ub
+        self.lb = lb
+
 # we design deeppoly to be input/output agnostic but rather just specific to the model TODO not sure if thats the right way to go
 class DeepPoly(torch.nn.Module):
     def __init__(self, model: torch.nn.Sequential, true_label: int):
@@ -11,12 +23,15 @@ class DeepPoly(torch.nn.Module):
         self.output_verifier = FinalLossVerifier(None, true_label)
         self.verifiers.append(self.input_verifier)
         
+        
         print("Model: ", model)
         for module in model:
             if isinstance(module, torch.nn.Linear):
                 self.verifiers.append(LinearVerifier(layer=module, previous=self.verifiers[-1]))
             elif isinstance(module, torch.nn.ReLU):
                 self.verifiers.append(ReluVerifier(previous=self.verifiers[-1]))
+            elif isinstance(module, torch.nn.LeakyReLU):
+                self.verifiers.append(LeakyReluVerifier(negative_slope=module.negative_slope,previous=self.verifiers[-1]))
             elif isinstance(module, torch.nn.Flatten):
                 pass
             elif isinstance(module, torch.nn.Conv2d):
@@ -31,29 +46,30 @@ class DeepPoly(torch.nn.Module):
         self.verifiers = torch.nn.Sequential(*self.verifiers)
         
 
-    def forward(self, x: torch.Tensor, eps: float) -> (torch.Tensor, torch.Tensor):
+    def forward(self, x: torch.Tensor, eps: float) -> Bound:
         # this method runs the whole deeploly scheme and returns wether we are correct or not
         # x is a batch of a single sample
         # y is a tensor containing single element (the target of the sample x)
         ub_in = torch.Tensor.clamp(x + eps, min=0, max=1)
         lb_in = torch.Tensor.clamp(x - eps, 0, 1)
 
-        final_bound = self.verifiers.forward(Bound(lb_in, ub_in))
-        lb, ub = final_bound.lb, final_bound.ub
-        return lb, ub
+        print("param:", list(self.verifiers.parameters()))
+        ## Optimization:
+
+        if len(list(self.verifiers.parameters())) !=0 :
+            opt = torch.optim.Adam(self.verifiers.parameters(), lr=0.1)
+            for i in range(0,20):
+                opt.zero_grad()
+                final_bound = self.verifiers.forward(Bound(ub=ub_in,lb=lb_in))
+                loss = torch.sum(- final_bound.lb).requires_grad_(True)
+                loss.backward()
+                opt.step()
+                print("param:", list(self.verifiers.parameters()))
+
+        final_bound = self.verifiers.forward(Bound(ub=ub_in,lb=lb_in))
+        return final_bound
         # we need to check if the true label is within the bounds
 
-class AlgebraicBound():
-    def __init__(self, ub_mult: torch.Tensor, lb_mult: torch.Tensor, ub_bias: torch.Tensor, lb_bias: torch.Tensor) -> None:
-        self.ub_mult = ub_mult
-        self.lb_mult = lb_mult
-        self.ub_bias = ub_bias
-        self.lb_bias = lb_bias
-
-class Bound():
-    def __init__(self, ub: torch.Tensor, lb: torch.Tensor) -> None:
-        self.ub = ub
-        self.lb = lb
 
 
 class Verifier(ABC):
@@ -100,7 +116,7 @@ class InputVerifier(Verifier, torch.nn.Module):
 
         bound.ub_mult = torch.zeros_like(bound.ub_mult)
         bound.lb_mult = torch.zeros_like(bound.lb_mult)
-        return Bound(bound.lb_bias, bound.ub_bias)
+        return Bound(lb=bound.lb_bias, ub=bound.ub_bias)
 
 
 class LinearVerifier(Verifier,torch.nn.Module):
@@ -110,21 +126,23 @@ class LinearVerifier(Verifier,torch.nn.Module):
     def __init__(self, layer: torch.nn.Linear, previous: Verifier):
         torch.nn.Module.__init__(self)
         Verifier.__init__(self,previous=previous)
-        self.layer = layer # type: torch.nn.Linear
+        self.weights = layer.weight.detach() # type: torch.nn.Linear
+        self.biases = layer.bias.detach() # type: torch.nn.Linear
+        
 
     def forward(self, x: Bound) -> Bound:
         print("Linear Layer Forward Pass")
         # here first we have to compute
         lb, ub = x.lb, x.ub
         # create an identity matrix with dimensions of the output vector of the linear layer (equal to the first dim of the weight matrix)
-        bound = AlgebraicBound(torch.eye(self.layer.weight.size(0)), torch.eye(self.layer.weight.size(0)), torch.zeros(self.layer.weight.size(0)), torch.zeros(self.layer.weight.size(0)))
+        bound = AlgebraicBound(torch.eye(self.weights.size(0)), torch.eye(self.weights.size(0)), torch.zeros(self.weights.size(0)), torch.zeros(self.weights.size(0)))
         self.backward(bound)
         self.ub = bound.ub_bias
         self.lb = bound.lb_bias
 
         self.output_dims = self.lb.size()
 
-        return Bound(self.lb, self.ub)
+        return Bound(lb=self.lb, ub=self.ub)
     
     def backward(self, bound: AlgebraicBound) -> Bound:
         """
@@ -133,10 +151,10 @@ class LinearVerifier(Verifier,torch.nn.Module):
         Recomputes the bounds so that it represents the algebraic bounds of the initializing layer w.r.t. to the output neurons of the previous layer.
         Then propagates the bounds to the previous layer.
         """
-        bound.ub_bias = bound.ub_bias + bound.ub_mult @ self.layer.bias
-        bound.lb_bias = bound.lb_bias + bound.lb_mult @ self.layer.bias
-        bound.ub_mult = bound.ub_mult @ self.layer.weight
-        bound.lb_mult = bound.lb_mult @ self.layer.weight
+        bound.ub_bias = bound.ub_bias + bound.ub_mult @ self.biases
+        bound.lb_bias = bound.lb_bias + bound.lb_mult @ self.biases
+        bound.ub_mult = bound.ub_mult @ self.weights
+        bound.lb_mult = bound.lb_mult @ self.weights
         self.previous.backward(bound)
 
 
@@ -148,7 +166,7 @@ class ReluVerifier(Verifier,torch.nn.Module):
     def __init__(self, previous: Optional[Verifier]):
         torch.nn.Module.__init__(self)
         Verifier.__init__(self,previous=previous)
-        self.alpha = torch.nn.Parameter(torch.zeros(previous.layer.weight.size(0)))
+        self.alpha = torch.nn.Parameter(torch.zeros(previous.weights.size(0))).requires_grad_(True)
 
     def forward(self, x: Bound) -> Bound:
         print("Relu Layer Forward Pass")
@@ -160,9 +178,9 @@ class ReluVerifier(Verifier,torch.nn.Module):
         self.slope = torch.clamp(ub/(ub-lb),min=0)
         self.ub_mult = torch.diag(torch.where(self.previous.lb>0,1.0,self.slope))
 
-        self.lb_mult = torch.diag(torch.where(self.previous.lb>0,1.0,0.0))
-        # self.lb_mult = torch.where(self.previous.lb>0,1.0,self.alpha)
-        # self.lb_mult = torch.diag(torch.where(ub<0,0,self.lb_mult))
+        # self.lb_mult = torch.diag(torch.where(self.previous.lb>0,1.0,0.0))
+        self.lb_mult = torch.where(self.previous.lb>0,1.0,torch.sigmoid(self.alpha))
+        self.lb_mult = torch.diag(torch.where(ub<0,0,self.lb_mult))
 
         self.ub_bias = torch.where(self.previous.lb>0,0,(- self.slope * self.previous.lb))
         self.lb_bias = torch.zeros_like(self.previous.lb)
@@ -172,7 +190,60 @@ class ReluVerifier(Verifier,torch.nn.Module):
         self.ub = bound.ub_bias
         self.lb = bound.lb_bias
         print("relu lower bound:", self.lb)
-        return Bound(self.lb, self.ub)
+        return Bound(lb=self.lb, ub=self.ub)
+    
+    def backward(self, bound: AlgebraicBound) -> Bound:
+        """
+        Input is a AlgebraicBound object that represents the algebraic bounds of the initializing layer w.r.t. to the output neurons of the current layer. So the contents are tensors of the shape: Tensor: number of out-neurons in initializing layer x number of out-neurons in current layer
+        Recomputes the bounds so that it represents the algebraic bounds of the initializing layer w.r.t. to the output neurons of the previous layer.
+        Then propagates the bounds to the previous layer.
+        """
+
+        bound.ub_bias = bound.ub_bias + torch.where(bound.ub_mult>0, bound.ub_mult, 0) @ self.ub_bias + torch.where(bound.ub_mult<0, bound.ub_mult, 0) @ self.lb_bias
+        bound.lb_bias = bound.lb_bias + torch.where(bound.lb_mult>0, bound.lb_mult, 0) @ self.lb_bias + torch.where(bound.lb_mult<0, bound.lb_mult, 0) @ self.ub_bias
+
+        bound.ub_mult = torch.where(bound.ub_mult>0, bound.ub_mult, 0) @ self.ub_mult + torch.where(bound.ub_mult<0, bound.ub_mult, 0) @ self.lb_mult
+        bound.lb_mult = torch.where(bound.lb_mult>0, bound.lb_mult, 0) @ self.lb_mult + torch.where(bound.lb_mult<0, bound.lb_mult, 0) @ self.ub_mult 
+    
+        self.previous.backward(bound)
+
+
+class LeakyReluVerifier(Verifier,torch.nn.Module):
+    """
+    Initiliazid in the forward method of a Transformer and passed backwards until the input variables at each step changing its algebraic representation.
+    """
+    def __init__(self, negative_slope: float, previous: Optional[Verifier]):
+        torch.nn.Module.__init__(self)
+        Verifier.__init__(self,previous=previous)
+        self.negative_slope = negative_slope
+        self.alpha = torch.nn.Parameter(torch.zeros(previous.weights.size(0))).requires_grad_(True)
+
+    def forward(self, x: Bound) -> Bound:
+        print("Relu Layer Forward Pass")
+
+        # here first we have to compute
+        lb, ub = self.previous.lb, self.previous.ub
+        self.output_dims = self.previous.output_dims
+        # need to clamp the slope so we dont compute negative slopes
+
+        self.slope = (ub-self.negative_slope*lb)/(ub-lb)
+        self.ub_mult = torch.where(lb>0,1.0,self.slope)
+        self.ub_mult = torch.diag(torch.where(ub<0,self.negative_slope,self.ub_mult))
+        
+        normalized_alphas = torch.sigmoid(self.alpha)*(1-self.negative_slope) + self.negative_slope
+        self.lb_mult = torch.where(lb>0,1.0,normalized_alphas)
+        self.lb_mult = torch.diag(torch.where(ub<0,self.negative_slope,self.lb_mult))
+
+        self.ub_bias = torch.where(lb>0, 0, (self.negative_slope - self.slope) * lb)
+        self.ub_bias = torch.where(ub<0, 0, self.ub_bias)
+        self.lb_bias = torch.zeros_like(lb)
+
+        bound = AlgebraicBound(torch.eye(ub.size(0)), torch.eye(ub.size(0)), torch.zeros(ub.size(0)), torch.zeros(ub.size(0)))
+        self.backward(bound)
+        self.ub = bound.ub_bias
+        self.lb = bound.lb_bias
+        print("relu lower bound:", self.lb)
+        return Bound(lb=self.lb, ub=self.ub)
     
     def backward(self, bound: AlgebraicBound) -> Bound:
         """
@@ -254,9 +325,7 @@ class FinalLossVerifier(Verifier,torch.nn.Module):
         self.backward(bound)
         self.ub = bound.ub_bias
         self.lb = bound.lb_bias
-        print("Lower AlgebraicBound: ", self.lb)
-        print("Upper AlgebraicBound: ", self.ub)
-        return Bound(bound.lb_bias, bound.ub_bias)
+        return Bound(lb=bound.lb_bias, ub=bound.ub_bias)
     
     def backward(self, bound: AlgebraicBound) -> Bound:
         """
@@ -276,8 +345,8 @@ class Conv2DVerifier(Verifier):
     def __init__(self, layer: torch.nn.Conv2d, previous: Verifier, next: Optional[Verifier]):
         super().__init__(previous=previous,next=next)
         self.layer = layer # type: torch.nn.Conv2d
-        self.dims = self.layer.weight.size()
-        self.weights_flattened = torch.flatten(self.layer.weight, start_dim=1)
+        self.dims = self.weights.size()
+        self.weights_flattened = torch.flatten(layer.weight, start_dim=1)
 
        
     def forward(self):
