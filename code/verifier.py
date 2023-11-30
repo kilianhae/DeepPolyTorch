@@ -14,7 +14,7 @@ def analyze(
     
     net.zero_grad()
     
-    verifier = DeepPoly(net, true_label=true_label)
+    verifier = DeepPoly(net, true_label=true_label, input=inputs)
 
     bound = verifier.forward(inputs, eps)
 

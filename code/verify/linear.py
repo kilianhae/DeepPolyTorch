@@ -73,36 +73,40 @@ class Conv2DVerifier(Verifier):
     def __init__(self, layer: torch.nn.Conv2d, previous: Verifier):
         torch.nn.Module.__init__(self)
         self.previous = previous
-        self.layer = layer # type: torch.nn.Conv2d
+        # for param in layer.parameters():
+        #     param.requires_grad = False
+        self.layer = torch.jit.freeze(torch.jit.script(layer))
+        self.padding = layer.padding
+        self.stride = layer.stride
+        self.dilation = layer.dilation
         self.weights_unflattened = layer.weight.detach() # type: torch.Tensor # shape: (out_channels, in_channels, kernel_size[0], kernel_size[1])
-        self.weights = torch.flatten(layer.weight, start_dim=1) # type: torch.Tensor # shape: (out_channels, in_channels * kernel_size[0] * kernel_size[1]) I THINK!
-        if self.layer.bias is not None:
-            self.biases = self.layer.bias.detach() 
+        self.weights = torch.flatten(layer.weight, start_dim=1).detach() # type: torch.Tensor # shape: (out_channels, in_channels * kernel_size[0] * kernel_size[1]) I THINK!
+        if layer.bias is not None:
+            self.biases = layer.bias.detach() 
         else:
-            self.biases = torch.zeros(self.weights.size(0))
+            self.biases = torch.zeros(self.weights.size(0)).detach() 
         self.bound = None
        
        ## we stroe the dimesnions of the unflattened inputs and outputs of the conv layer for use on the backward or forward methods
         self._out_dims = self.compute_out_dims()
-        self._out_size = torch.tensor(self._out_dims).prod().item()
+        self._out_size = int(torch.tensor(self._out_dims).prod().item())
 
     ## TODO: Check if this is correct!
     def compute_out_dims(self) -> tuple[int, ...]:
         """
         Computes the output dimensions of the conv layer given the input dimensions.
         """
-        weight_dimensions = self.weights.size()
-        assert isinstance(self.layer.padding, tuple)
-        out_dims = tuple(torch.floor(torch.tensor([weight_dimensions[0],(self.previous.out_dims[1]+2*self.layer.padding[0]-self.layer.dilation[0]*(weight_dimensions[2]-1)-1)/self.layer.stride[0] + 1, (self.previous.out_dims[2]+2*self.layer.padding[1]-self.layer.dilation[1]*(weight_dimensions[3]-1)-1)/self.layer.stride[1] + 1])).tolist())
+        weight_dimensions = self.weights_unflattened.size()
+        #assert isinstance(self.layer.padding, tuple)
+        out_dims = tuple(torch.floor(torch.tensor([weight_dimensions[0],(self.previous.out_dims[1]+2*self.padding[0]-self.dilation[0]*(weight_dimensions[2]-1)-1)/self.stride[0] + 1, (self.previous.out_dims[2]+2*self.padding[1]-self.dilation[1]*(weight_dimensions[3]-1)-1)/self.stride[1] + 1])).tolist())
         return out_dims
         
     def forward(self, x: Bound) -> Bound:
         # create an identity matrix with dimensions of the output vector of the flattened conv layer (NOT equal to the first dim of the weight matrix)
         algebraic_bound = AlgebraicBound(torch.eye(self.out_size), torch.eye(self.out_size), torch.zeros(self.out_size), torch.zeros(self.out_size))
         self.backward(algebraic_bound)
-        self.ub = algebraic_bound.ub_bias
-        self.lb = algebraic_bound.lb_bias
-        return Bound(lb=algebraic_bound.lb_bias, ub=algebraic_bound.ub_bias)
+        self.bound = Bound(ub=algebraic_bound.ub_bias, lb=algebraic_bound.lb_bias)
+        return self.bound
 
     def backward(self, bound: AlgebraicBound) -> None:
         """
@@ -111,7 +115,12 @@ class Conv2DVerifier(Verifier):
         Recomputes the bounds so that it represents the algebraic bounds of the initializing layer w.r.t. to the output neurons of the previous layer.
         Then propagates the bounds to the previous layer.
         """
-        
+        ub_mult = torch.zeros([bound.ub_mult.size(0), self.previous.out_size])
+        lb_mult = torch.zeros([bound.lb_mult.size(0), self.previous.out_size])
+        bound.ub_mult=ub_mult
+        bound.lb_mult=lb_mult
+        self.previous.backward(bound)
+
 
 
         

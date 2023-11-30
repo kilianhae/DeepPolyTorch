@@ -6,7 +6,7 @@ from torchviz import make_dot
 
 from bound import Bound, AlgebraicBound
 from verify.verify import Verifier, FinalLossVerifier, InputVerifier
-from verify.linear import LinearVerifier
+from verify.linear import LinearVerifier, Conv2DVerifier
 from verify.activation import ReluVerifier, LeakyReluVerifierFlat, LeakyReluVerifierSteep
 
 class DeepPoly(torch.nn.Module):
@@ -22,15 +22,17 @@ class DeepPoly(torch.nn.Module):
     verifiers : torch.nn.Sequential representing the verifiers for each layer of the model
     input_verifier : InputVerifier representing the verifier for the input layer
     """
-    def __init__(self, model: torch.nn.Sequential, true_label: int):
+    def __init__(self, model: torch.nn.Sequential, input: torch.Tensor, true_label: int):
         super().__init__()
         verifiers = [] # type: list[Verifier]
-        self.input_verifier = InputVerifier()
+        self.input_verifier = InputVerifier(input.size())
         verifiers.append(self.input_verifier)
         
         for module in model:
             if isinstance(module, torch.nn.Linear):
                 verifiers.append(LinearVerifier(layer=module, previous=verifiers[-1]))
+            elif isinstance(module, torch.nn.Conv2d):
+                verifiers.append(Conv2DVerifier(layer=module, previous=verifiers[-1]))
             elif isinstance(module, torch.nn.ReLU):
                 verifiers.append(ReluVerifier(previous=verifiers[-1]))
             elif isinstance(module, torch.nn.LeakyReLU):

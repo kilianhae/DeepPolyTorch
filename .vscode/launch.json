@@ -65,6 +65,18 @@
             "justMyCode": true
         },
         {
+            "name": "Python: conv_base.py",
+            "type": "python",
+            "request": "launch",
+            "program": "code/verifier.py",
+            "args": [
+                "--net", "conv_base",
+                "--spec", "test_cases/conv_base/img1_mnist_0.0014.txt"
+            ],
+            "console": "integratedTerminal",
+            "justMyCode": true
+        },
+        {
             "name": "Python: Module",
             "type": "python",
             "request": "launch",

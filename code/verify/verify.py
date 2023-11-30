@@ -61,11 +61,11 @@ class Verifier(ABC, torch.nn.Module):
 
 
 class InputVerifier(Verifier):
-    def __init__(self):
+    def __init__(self, input_dims: tuple[int, ...]):
         torch.nn.Module.__init__(self)
         self.bound = None # type: Optional[Bound]
         self._out_size = None # type: Optional[int]
-        self._out_dims = None # type: Optional[tuple[int, ...]]
+        self._out_dims = input_dims # type: Optional[tuple[int, ...]]
         self.previous = None # type: Optional[Verifier]
         
         # ub_in = torch.Tensor.clamp(x + eps, min=0, max=1)
@@ -79,6 +79,8 @@ class InputVerifier(Verifier):
         # self.backward(algebraic_input_bound)
         # self.bound = Bound(lb=algebraic_input_bound.lb_bias, ub=algebraic_input_bound.ub_bias)
         self.bound = Bound(lb=x.lb.flatten(), ub=x.ub.flatten())
+        self._out_size = self.bound.ub.size(0)
+        self._out_dims = x.lb.size()
         return self.bound
     
     def backward(self, bound: AlgebraicBound) -> None:
