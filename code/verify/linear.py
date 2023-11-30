@@ -14,6 +14,7 @@ class LinearVerifier(Verifier):
         self.biases = layer.bias.detach()
         self.bound = None
         self._out_size = self.weights.size(0)
+        self._out_dims = (self._out_size,)
         
     def forward(self, x: Bound) -> Bound:
         # create an identity matrix with dimensions of the output vector of the linear layer (equal to the first dim of the weight matrix)
@@ -32,6 +33,7 @@ class LinearVerifier(Verifier):
 
     
 
+## NOTE: The following code is not used in the current implementation of DeepPoly. It is kept here for future reference. 
 # class FlattenVerifier(Verifier):
 #     """
 #     Initiliazid in the forward method of a Transformer and passed backwards until the input variables at each step changing its algebraic representation.
@@ -64,47 +66,52 @@ class LinearVerifier(Verifier):
 
 
 
-# class Conv2DVerifier(Verifier):
-#     """
-#     Initiliazid in the forward method of a Transformer and passed backwards until the input variables at each step changing its algebraic representation.
-#     """
-#     def __init__(self, layer: torch.nn.Conv2d, previous: Verifier, next: Optional[Verifier]):
-#         super().__init__(previous=previous,next=next)
-#         self.layer = layer # type: torch.nn.Conv2d
-#         self.dims = self.weights.size()
-#         self.weights_flattened = torch.flatten(layer.weight, start_dim=1)
-
+class Conv2DVerifier(Verifier):
+    """
+    Initiliazid in the forward method of a Transformer and passed backwards until the input variables at each step changing its algebraic representation.
+    """
+    def __init__(self, layer: torch.nn.Conv2d, previous: Verifier):
+        torch.nn.Module.__init__(self)
+        self.previous = previous
+        self.layer = layer # type: torch.nn.Conv2d
+        self.weights_unflattened = layer.weight.detach() # type: torch.Tensor # shape: (out_channels, in_channels, kernel_size[0], kernel_size[1])
+        self.weights = torch.flatten(layer.weight, start_dim=1) # type: torch.Tensor # shape: (out_channels, in_channels * kernel_size[0] * kernel_size[1]) I THINK!
+        if self.layer.bias is not None:
+            self.biases = self.layer.bias.detach() 
+        else:
+            self.biases = torch.zeros(self.weights.size(0))
+        self.bound = None
        
-#     def forward(self):
-#         print("Linear Layer Forward Pass")
-#         # here first we have to compute
-#         lb, ub = self.previous.lb, self.previous.ub
+       ## we stroe the dimesnions of the unflattened inputs and outputs of the conv layer for use on the backward or forward methods
+        self._out_dims = self.compute_out_dims()
+        self._out_size = torch.tensor(self._out_dims).prod().item()
 
-#         # calculate & store output dimensions
-#         self.input_dim_flattend = self.previous.ub.size()
-#         self.output_dims = torch.floor(torch.tensor([self.dims[0],(self.previous.output_dims[1]+2*self.layer.padding[0]-self.layer.dilation[0]*(self.dims[2]-1)-1)/self.layer.stride[0] + 1, (self.previous.output_dims[2]+2*self.layer.padding[1]-self.layer.dilation[1]*(self.dims[3]-1)-1)/self.layer.stride[1] + 1])).int().tolist()
+    ## TODO: Check if this is correct!
+    def compute_out_dims(self) -> tuple[int, ...]:
+        """
+        Computes the output dimensions of the conv layer given the input dimensions.
+        """
+        weight_dimensions = self.weights.size()
+        assert isinstance(self.layer.padding, tuple)
+        out_dims = tuple(torch.floor(torch.tensor([weight_dimensions[0],(self.previous.out_dims[1]+2*self.layer.padding[0]-self.layer.dilation[0]*(weight_dimensions[2]-1)-1)/self.layer.stride[0] + 1, (self.previous.out_dims[2]+2*self.layer.padding[1]-self.layer.dilation[1]*(weight_dimensions[3]-1)-1)/self.layer.stride[1] + 1])).tolist())
+        return out_dims
         
-#         # create an identity matrix with dimensions of the output vector of the flattened conv layer (NOT equal to the first dim of the weight matrix)
-#         bound = AlgebraicBound(torch.eye(torch.zeros(self.output_dims).flatten().size(0)), torch.eye(torch.zeros(self.output_dims).flatten().size(0)), torch.zeros(self.output_dims).flatten(), torch.zeros(self.output_dims).flatten())
-#         self.backward(bound)
-#         self.ub = bound.ub_bias
-#         self.lb = bound.lb_bias
-#         return self.next.forward()
+    def forward(self, x: Bound) -> Bound:
+        # create an identity matrix with dimensions of the output vector of the flattened conv layer (NOT equal to the first dim of the weight matrix)
+        algebraic_bound = AlgebraicBound(torch.eye(self.out_size), torch.eye(self.out_size), torch.zeros(self.out_size), torch.zeros(self.out_size))
+        self.backward(algebraic_bound)
+        self.ub = algebraic_bound.ub_bias
+        self.lb = algebraic_bound.lb_bias
+        return Bound(lb=algebraic_bound.lb_bias, ub=algebraic_bound.ub_bias)
 
-#     def backward(self, bound: AlgebraicBound):
-#         """
-#         Input is a AlgebraicBound object that represents the algebraic bounds of the initializing layer w.r.t. to the output neurons of the 
-#         current layer. So the contents are tensors of the shape: Tensor: number of out-neurons in initializing layer x number of out-neurons in current layer
-#         Recomputes the bounds so that it represents the algebraic bounds of the initializing layer w.r.t. to the output neurons of the previous layer.
-#         Then propagates the bounds to the previous layer.
-#         """
-#         # for the linear layer we dont need to differentiate between lower and upper bounds as they are the same
-#         # print("Linear Layer Backward Pass")
-#         # print(bound.lb_bias)
-#         # print(bound.ub_bias)
-#         a = []
-#         a.append(bound.ub_mult.size(0))
-#         a.append(self.previous.ub.size(0))
-#         bound.ub_mult = torch.zeros(a)
-#         bound.lb_mult = torch.zeros(a)        
-#         self.previous.backward(bound)
+    def backward(self, bound: AlgebraicBound) -> None:
+        """
+        Input is a AlgebraicBound object that represents the algebraic bounds of the initializing layer w.r.t. to the output neurons of the 
+        current layer. So the contents are tensors of the shape: Tensor: number of out-neurons in initializing layer x number of out-neurons in current layer
+        Recomputes the bounds so that it represents the algebraic bounds of the initializing layer w.r.t. to the output neurons of the previous layer.
+        Then propagates the bounds to the previous layer.
+        """
+        
+
+
+        

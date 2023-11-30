@@ -10,6 +10,7 @@ class ReluVerifier(Verifier):
         torch.nn.Module.__init__(self)
         self.previous = previous
         self._out_size = self.previous.out_size
+        self._out_dims = self.previous.out_dims
         self.alpha = torch.nn.Parameter(torch.zeros(self.out_size)).requires_grad_(True)
         
     def forward(self, x: Bound) -> Bound:

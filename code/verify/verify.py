@@ -16,6 +16,16 @@ class Verifier(ABC, torch.nn.Module):
         assert isinstance(self._out_size, int)
         return self._out_size
     
+    @property
+    def out_dims(self) -> tuple[int, ...]:
+        """
+        Must be set for every Verifier (for the input verifier this is only set after the forward pass)
+
+        Returns:
+            The number of output neurons of the current layer.
+        """
+        return self._out_dims
+    
     @abstractmethod
     def forward(self, x: Bound) -> Bound:
         """
@@ -55,6 +65,7 @@ class InputVerifier(Verifier):
         torch.nn.Module.__init__(self)
         self.bound = None # type: Optional[Bound]
         self._out_size = None # type: Optional[int]
+        self._out_dims = None # type: Optional[tuple[int, ...]]
         self.previous = None # type: Optional[Verifier]
         
         # ub_in = torch.Tensor.clamp(x + eps, min=0, max=1)
@@ -93,6 +104,7 @@ class FinalLossVerifier(Verifier):
         torch.nn.Module.__init__(self)
         self.previous = previous
         self.true_label = true_label
+        self._out_dims = self.previous.out_dims
         self._out_size = self.previous.out_size
 
     def forward(self, x: Bound) -> Bound:
