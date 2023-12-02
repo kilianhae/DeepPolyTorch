@@ -1,10 +1,7 @@
 from __future__ import annotations
-from abc import ABC, abstractmethod, abstractproperty
-from typing import Optional
 import torch
-from torchviz import make_dot
 
-from bound import Bound, AlgebraicBound
+from bound import Bound
 from verify.verify import Verifier, FinalLossVerifier, InputVerifier
 from verify.linear import LinearVerifier, Conv2DVerifier
 from verify.activation import ReluVerifier, LeakyReluVerifierFlat, LeakyReluVerifierSteep
