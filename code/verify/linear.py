@@ -96,95 +96,82 @@ class Conv2DVerifier(Verifier):
         self._out_dims = self.compute_out_dims()
         self._out_size = int(torch.tensor(self._out_dims).prod().item())
 
-        
+        self.mult = None
+        self.bias = None
         
 
     ## TODO: Check if this is correct!
-    def compute_out_dims(self) -> tuple[int, ...]:
+    def compute_out_dims(self) -> tuple[int, int, int]:
         """
         Computes the output dimensions of the conv layer given the input dimensions.
         """
         weight_dimensions = self.weights_unflattened.size()
-        #assert isinstance(self.layer.padding, tuple)
-        out_dims = tuple(torch.floor(torch.tensor([weight_dimensions[0],(self.previous.out_dims[1]+2*self.padding[0]-self.dilation[0]*(weight_dimensions[2]-1)-1)/self.stride[0] + 1, (self.previous.out_dims[2]+2*self.padding[1]-self.dilation[1]*(weight_dimensions[3]-1)-1)/self.stride[1] + 1])).int().tolist())
+        assert isinstance(self.padding, tuple)
+        out_channels = int(weight_dimensions[0])
+        out_height = int((self.previous.out_dims[1]+2*self.padding[0]-self.dilation[0]*(weight_dimensions[2]-1)-1)/self.stride[0] + 1)
+        out_width = int((self.previous.out_dims[2]+2*self.padding[1]-self.dilation[1]*(weight_dimensions[3]-1)-1)/self.stride[1] + 1)
+        out_dims = (out_channels, out_height, out_width)
         return out_dims
         
     def forward(self, x: Bound) -> Bound:
         # create an identity matrix with dimensions of the output vector of the flattened conv layer (NOT equal to the first dim of the weight matrix)
-        self.mult, self.bias = self.compute_mult()
+        if self.mult is None:
+            self.mult, self.bias = self.compute_mult()
         algebraic_bound = AlgebraicBound(torch.eye(self.out_size), torch.eye(self.out_size), torch.zeros(self.out_size), torch.zeros(self.out_size))
         self.backward(algebraic_bound)
         self.bound = Bound(ub=algebraic_bound.ub_bias, lb=algebraic_bound.lb_bias)
         return self.bound
     
     def compute_mult(self) -> tuple[torch.Tensor, torch.Tensor]:
-        now = time.time()
-        padding=self.padding[0]
-        stride=self.stride[0]
-        kernel_size=self.kernel_size[0]
-        in_channels=self.in_channels
-        out_channels=self.out_channels
+        start_time = time.time()
+        padding = self.padding[0]
+        stride = self.stride[0]
+        kernel_size = self.kernel_size[0]
+        in_channels = self.in_channels
+        out_channels = self.out_channels
 
         assert isinstance(padding, int)
-        # compute all dimensions
-        in_channels = self.previous.out_dims[0]
-        in_height = self.previous.out_dims[1]
-        in_width = self.previous.out_dims[2]
-        out_channels = self.out_dims[0]
-        out_height = self.out_dims[1]
-        out_width = self.out_dims[2]
 
-        in_width_p = in_width + padding * 2
-        in_height_p = in_height + padding * 2
-        weights = self.weights_unflattened
+        out_channels, out_height, out_width = self.out_dims
 
-        size_p = in_height_p * in_width_p
-        in_dim = size_p * in_channels
-        out_dim = out_height * out_width * out_channels
-        res = torch.zeros((out_dim, in_dim))
+        in_width_padded = self.previous.out_dims[2] + padding * 2
+        in_height_padded = self.previous.out_dims[1] + padding * 2
 
-        # build row fillers
-        len_rows = (in_channels - 1) * size_p + (kernel_size - 1) * in_width_p + kernel_size
-        channels = torch.zeros((out_channels, len_rows))
+        in_channel_size_padded = in_height_padded * in_width_padded
+        in_size_padded = in_channel_size_padded * in_channels
+        mult_matrix = torch.zeros((self.out_size, in_size_padded))
 
-        for i_out in range(out_channels):
-            for i_in in range(in_channels):
-                i_p = i_in * size_p
+        kernel_row_length = (in_channels - 1) * in_channel_size_padded + (kernel_size - 1) * in_width_padded + kernel_size
+        kernel_rows = torch.zeros((out_channels, kernel_row_length))
+
+        for oc in range(out_channels):
+            for ic in range(in_channels):
                 for k in range(kernel_size):
-                    start = i_p + k * in_width_p
-                    end = start + kernel_size
-                    channels[i_out, start:end] = weights[i_out, i_in, k]
+                    start_idx = ic * in_channel_size_padded + k * in_width_padded
+                    end_idx = start_idx + kernel_size
+                    kernel_rows[oc, start_idx:end_idx] = self.weights_unflattened[oc, ic, k]
 
-            for i_out_height in range(out_height):
-                for i_out_width in range(out_width):
-                    start = i_out_height * stride * in_width_p + i_out_width * stride
-                    end = start + len_rows
-                    output = i_out * out_height * out_width + i_out_height * out_width + i_out_width
-                    res[output, start:end] = channels[i_out]
+            for ih in range(out_height):
+                for iw in range(out_width):
+                    start_idx = ih * stride * in_width_padded + iw * stride
+                    end_idx = start_idx + kernel_row_length
+                    output_idx = oc * out_height * out_width + ih * out_width + iw
+                    mult_matrix[output_idx, start_idx:end_idx] = kernel_rows[oc]
 
-        # remove padding
-        padding_rows = []
-        for i_in in range(in_channels):
-            for i_in_height in range(in_height_p):
-                for i_in_width in range(in_width_p):
-                    if i_in_width < padding or i_in_width >= padding + in_width:
-                        padding_rows.append(i_in * size_p + i_in_height * in_width_p + i_in_width)
-
-                if i_in_height < padding or i_in_height >= padding + in_height:
-                    start = i_in * size_p + i_in_height * in_width_p
-                    end = start + in_width_p
-                    padding_rows = padding_rows + list(range(start, end))
-
-        padding_rows = list(np.unique(np.array(padding_rows)))  # delete duplicates
-
-        lc = torch.from_numpy(np.delete(res.numpy(), padding_rows, axis=1)).detach()
+        if padding != 0:
+            padding_mask = torch.zeros([in_channels, in_width_padded, in_height_padded])
+            padding_mask[:, padding:-padding, padding:-padding] = torch.ones(self.previous.out_dims)
+            padding_mask = padding_mask.flatten()
+            mult_matrix = mult_matrix[:, torch.tensor(padding_mask) == 1]
 
         if self.biases is None:
-            ret_bias = torch.zeros(out_width * out_height * out_channels)
+            bias_vector = torch.zeros(out_width * out_height * out_channels)
         else:
-            ret_bias = torch.repeat_interleave(self.biases, out_width * out_height)
-        print("time to compute mult: ", time.time()-now)
-        return lc, ret_bias
+            bias_vector = torch.repeat_interleave(self.biases, out_width * out_height)
+
+        computation_time = time.time() - start_time
+        print("Time to compute multiplication matrix: ", computation_time)
+        return mult_matrix, bias_vector
 
     def backward(self, bound: AlgebraicBound) -> None:
         """
@@ -194,55 +181,10 @@ class Conv2DVerifier(Verifier):
         Then propagates the bounds to the previous layer.
         """
         now = time.time()
-        # parameters
         bound.ub_bias = bound.ub_bias + bound.ub_mult @ self.bias
         bound.lb_bias = bound.lb_bias + bound.lb_mult @ self.bias
         bound.ub_mult = bound.ub_mult @ self.mult
         bound.lb_mult = bound.lb_mult @ self.mult
-        # padding=self.padding[0]
-        # stride=self.stride[0]
-        # kernel_size=self.kernel_size[0]
-        # in_channels=self.in_channels
-        # out_channels=self.out_channels
-        # weights = self.weights_unflattened
-        # out_channels = self.out_dims[0]
-        # out_height = self.out_dims[1]
-        # out_width = self.out_dims[2]
-        # in_height = self.previous.out_dims[1]
-        # in_width = self.previous.out_dims[2]
-        
-        # weights = self.weights_unflattened
-        # assert isinstance(padding, int) 
-        # padded_size = list(self.previous.out_dims)
-        # padded_size = [bound.lb_bias.size(0)] + padded_size
-        # padded_size[2] = padded_size[2] + 2 * padding
-        # padded_size[3] = padded_size[3] + 2 * padding
-        # bound.ub_mult = torch.reshape(bound.ub_mult, [bound.lb_bias.size(0)]+list(self.out_dims))
-        # bound.lb_mult = torch.reshape(bound.lb_mult, [bound.lb_bias.size(0)]+list(self.out_dims))
-        # im_ub = torch.zeros(padded_size)
-        # im_lb = torch.zeros(padded_size)
-        # for i_out in range(out_channels):
-        #     channel_weights = weights[i_out]
-        #     for i_h in range(out_height):
-        #         for i_w in range(out_width):
-        #             el_ub = bound.ub_mult[:,i_out,i_h,i_w]
-        #             el_lb = bound.lb_mult[:,i_out,i_h,i_w]
-        #             now1 = time.time()
-        #             im_ub[:,:,stride*i_h:stride*i_h+kernel_size, stride*i_w:stride*i_w+kernel_size] = im_ub[:,:,stride*i_h:stride*i_h+kernel_size, stride*i_w:stride*i_w+kernel_size] + el_ub.view(-1,1,1,1) * channel_weights
-        #             im_lb[:,:,stride*i_h:stride*i_h+kernel_size, stride*i_w:stride*i_w+kernel_size] = im_lb[:,:,stride*i_h:stride*i_h+kernel_size, stride*i_w:stride*i_w+kernel_size] + el_lb.view(-1,1,1,1) * channel_weights
-        #             print(time.time() - now1)
-        # if padding > 0:
-        #     im_ub = im_ub[:,:,padding:-padding,padding:-padding]
-        #     im_lb = im_lb[:,:,padding:-padding,padding:-padding]
-
-        # sum_ub = bound.ub_mult.sum(dim=[2,3])
-        # sum_lb = bound.lb_mult.sum(dim=[2,3])
-        # bias_r = self.biases.view(1,-1)
-        # bound.ub_bias = bound.ub_bias + (sum_ub * bias_r).sum(1)
-        # bound.lb_bias = bound.lb_bias + (sum_lb * bias_r).sum(1)
-
-        # bound.ub_mult = im_ub.reshape(im_ub.size(0),-1)
-        # bound.lb_mult = im_lb.reshape(im_ub.size(0),-1)
         print("time to compute backward: ", time.time()-now)
 
         return self.previous.backward(bound)
