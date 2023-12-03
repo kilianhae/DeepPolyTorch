@@ -96,6 +96,9 @@ class Conv2DVerifier(Verifier):
         self._out_dims = self.compute_out_dims()
         self._out_size = int(torch.tensor(self._out_dims).prod().item())
 
+        self.mult = None
+        self.bias = None
+
         
         
 
@@ -111,7 +114,8 @@ class Conv2DVerifier(Verifier):
         
     def forward(self, x: Bound) -> Bound:
         # create an identity matrix with dimensions of the output vector of the flattened conv layer (NOT equal to the first dim of the weight matrix)
-        self.mult, self.bias = self.compute_mult()
+        if self.mult is None:
+            self.mult, self.bias = self.compute_mult()
         algebraic_bound = AlgebraicBound(torch.eye(self.out_size), torch.eye(self.out_size), torch.zeros(self.out_size), torch.zeros(self.out_size))
         self.backward(algebraic_bound)
         self.bound = Bound(ub=algebraic_bound.ub_bias, lb=algebraic_bound.lb_bias)
