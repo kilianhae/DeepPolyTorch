@@ -133,14 +133,19 @@ class Conv2DVerifier(Verifier):
         out_channels = self.out_dims[0]
         out_height = self.out_dims[1]
         out_width = self.out_dims[2]
-
         
 
         final_matrix = torch.zeros((in_width * in_height * in_channels, out_width * out_height * out_channels))
 
         flattened_weights = self.weights.flatten()
 
-        offset = int((kernel_size - 1) / 2)
+        # Check if kernel size is odd
+        is_even_kernel = kernel_size % 2 == 0
+        if is_even_kernel:
+            offset = int(kernel_size / 2)
+        else:
+            offset = int((kernel_size - 1) / 2)
+        
         kernel_size_kadenz = kernel_size * kernel_size
         output_image_kadenz = out_width * out_height
         final_matrix_col_indices = torch.zeros(out_width * out_height * out_channels)
@@ -148,13 +153,17 @@ class Conv2DVerifier(Verifier):
 
         for channel_in_idx in range(in_channels):
             # Only iterate over the ones where the kernel fits
-            for col_in in range(offset-padding, in_height - offset + padding, stride):
-                for row_in in range(offset-padding, in_width - offset + padding, stride):
+            top_bound_height = in_height - offset + padding
+            top_bound_width = in_width - offset + padding
+            if is_even_kernel:
+                top_bound_height += 1
+                top_bound_width += 1
+            
+            for col_in in range(offset-padding, top_bound_height, stride):
+                for row_in in range(offset-padding, top_bound_width, stride):
                     # Indices of the output
                     col_out = int((col_in - offset + padding)/stride)
                     row_out = int((row_in - offset + padding)/stride)
-
-                    #print("Channel: ", channel_in_idx, "Col: ", col_in, "Row: ", row_in, "Column out: ", col_out, "Row out: ", row_out)
 
 
                     # Final matrix column indices is the relative position inside the output image
@@ -169,15 +178,19 @@ class Conv2DVerifier(Verifier):
 
                     
                     kernel_count_idx = 0
-                    for kernel_col_idx in range(col_in - offset, col_in + offset + 1):
-                        for kernel_row_idx in range(row_in - offset, row_in + offset + 1):
+                    top_col_bound = col_in + offset + 1
+                    top_row_bound = row_in + offset + 1
+                    if is_even_kernel:
+                        top_col_bound -= 1
+                        top_row_bound -= 1
+                    for kernel_col_idx in range(col_in - offset, top_col_bound):
+                        for kernel_row_idx in range(row_in - offset, top_row_bound):
                             if kernel_col_idx < 0 or kernel_row_idx < 0 or kernel_col_idx >= in_height or kernel_row_idx >= in_width:
                                 kernel_count_idx += 1
                                 continue
                     
                             # Final matrix row index is the relative position inside the input image
                             final_matrix_row_idx = (kernel_col_idx * in_width + kernel_row_idx) + (channel_in_idx * in_width * in_height)
-                            #print("Final matrix row idx: ", final_matrix_row_idx)
 
                             # Final matrix weight indices is the relative position inside the kernel -> kernel_count_idx
                             # It has to be across the channels with kadenz of the kernel size
@@ -198,19 +211,21 @@ class Conv2DVerifier(Verifier):
 
                             kernel_count_idx += 1
 
+        print("time to compute mult (Olli): ", time.time()-now)
         
-        #in_width_p = in_width + padding * 2
-        #in_height_p = in_height + padding * 2
-        #weights = self.weights_unflattened
+        # now = time.time()
+        # in_width_p = in_width + padding * 2
+        # in_height_p = in_height + padding * 2
+        # weights = self.weights_unflattened
 
-        #size_p = in_height_p * in_width_p
-        #in_dim = size_p * in_channels
-        #out_dim = out_height * out_width * out_channels
-        #res = torch.zeros((out_dim, in_dim))
+        # size_p = in_height_p * in_width_p
+        # in_dim = size_p * in_channels
+        # out_dim = out_height * out_width * out_channels
+        # res = torch.zeros((out_dim, in_dim))
 
-        # build row fillers
-        #len_rows = (in_channels - 1) * size_p + (kernel_size - 1) * in_width_p + kernel_size
-        #channels = torch.zeros((out_channels, len_rows))
+        # #build row fillers
+        # len_rows = (in_channels - 1) * size_p + (kernel_size - 1) * in_width_p + kernel_size
+        # channels = torch.zeros((out_channels, len_rows))
 
         # for i_out in range(out_channels):
         #     for i_in in range(in_channels):
@@ -244,11 +259,15 @@ class Conv2DVerifier(Verifier):
 
         # lc = torch.from_numpy(np.delete(res.numpy(), padding_rows, axis=1)).detach()
 
+        # print("time to compute mult (theirs): ", time.time()-now)
+
+        # Check if the matrix is correct
+        # print("Is correct?", torch.allclose(lc, final_matrix.transpose(0,1)))
+
         if self.biases is None:
             ret_bias = torch.zeros(out_width * out_height * out_channels)
         else:
             ret_bias = torch.repeat_interleave(self.biases, out_width * out_height)
-        print("time to compute mult: ", time.time()-now)
         return final_matrix.transpose(0,1), ret_bias
 
     def backward(self, bound: AlgebraicBound) -> None:
@@ -308,6 +327,6 @@ class Conv2DVerifier(Verifier):
 
         # bound.ub_mult = im_ub.reshape(im_ub.size(0),-1)
         # bound.lb_mult = im_lb.reshape(im_ub.size(0),-1)
-        print("time to compute backward: ", time.time()-now)
+        #print("time to compute backward: ", time.time()-now)
 
         return self.previous.backward(bound)
