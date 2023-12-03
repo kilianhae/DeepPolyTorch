@@ -98,6 +98,9 @@ class Conv2DVerifier(Verifier):
 
         self.mult = None
         self.bias = None
+
+        self.mult = None
+        self.bias = None
         
 
     ## TODO: Check if this is correct!
@@ -117,6 +120,8 @@ class Conv2DVerifier(Verifier):
         # create an identity matrix with dimensions of the output vector of the flattened conv layer (NOT equal to the first dim of the weight matrix)
         if self.mult is None:
             self.mult, self.bias = self.compute_mult()
+        if self.mult is None:
+            self.mult, self.bias = self.compute_mult()
         algebraic_bound = AlgebraicBound(torch.eye(self.out_size), torch.eye(self.out_size), torch.zeros(self.out_size), torch.zeros(self.out_size))
         self.backward(algebraic_bound)
         self.bound = Bound(ub=algebraic_bound.ub_bias, lb=algebraic_bound.lb_bias)
@@ -131,47 +136,98 @@ class Conv2DVerifier(Verifier):
         out_channels = self.out_channels
 
         assert isinstance(padding, int)
+        # compute all dimensions
+        in_channels = self.previous.out_dims[0]
+        in_height = self.previous.out_dims[1]
+        in_width = self.previous.out_dims[2]
+        out_channels = self.out_dims[0]
+        out_height = self.out_dims[1]
+        out_width = self.out_dims[2]
+        
 
-        out_channels, out_height, out_width = self.out_dims
+        final_matrix = torch.zeros((in_width * in_height * in_channels, out_width * out_height * out_channels))
 
-        in_width_padded = self.previous.out_dims[2] + padding * 2
-        in_height_padded = self.previous.out_dims[1] + padding * 2
+        flattened_weights = self.weights.flatten()
 
-        in_channel_size_padded = in_height_padded * in_width_padded
-        in_size_padded = in_channel_size_padded * in_channels
-        mult_matrix = torch.zeros((self.out_size, in_size_padded))
-
-        kernel_row_length = (in_channels - 1) * in_channel_size_padded + (kernel_size - 1) * in_width_padded + kernel_size
-        kernel_rows = torch.zeros((out_channels, kernel_row_length))
-
-        for oc in range(out_channels):
-            for ic in range(in_channels):
-                for k in range(kernel_size):
-                    start_idx = ic * in_channel_size_padded + k * in_width_padded
-                    end_idx = start_idx + kernel_size
-                    kernel_rows[oc, start_idx:end_idx] = self.weights_unflattened[oc, ic, k]
-
-            for ih in range(out_height):
-                for iw in range(out_width):
-                    start_idx = ih * stride * in_width_padded + iw * stride
-                    end_idx = start_idx + kernel_row_length
-                    output_idx = oc * out_height * out_width + ih * out_width + iw
-                    mult_matrix[output_idx, start_idx:end_idx] = kernel_rows[oc]
-
-        if padding != 0:
-            padding_mask = torch.zeros([in_channels, in_width_padded, in_height_padded])
-            padding_mask[:, padding:-padding, padding:-padding] = torch.ones(self.previous.out_dims)
-            padding_mask = padding_mask.flatten()
-            mult_matrix = mult_matrix[:, torch.tensor(padding_mask) == 1]
-
-        if self.biases is None:
-            bias_vector = torch.zeros(out_width * out_height * out_channels)
+        # Check if kernel size is odd
+        is_even_kernel = kernel_size % 2 == 0
+        if is_even_kernel:
+            offset = int(kernel_size / 2)
         else:
-            bias_vector = torch.repeat_interleave(self.biases, out_width * out_height)
+            offset = int((kernel_size - 1) / 2)
+        
+        kernel_size_kadenz = kernel_size * kernel_size
+        output_image_kadenz = out_width * out_height
+        final_matrix_col_indices = torch.zeros(out_width * out_height * out_channels)
+        final_matrix_weight_indices = torch.zeros(flattened_weights.size())
 
-        computation_time = time.time() - start_time
-        print("Time to compute multiplication matrix: ", computation_time)
-        return mult_matrix, bias_vector
+        for channel_in_idx in range(in_channels):
+            # Only iterate over the ones where the kernel fits
+            top_bound_height = in_height - offset + padding
+            top_bound_width = in_width - offset + padding
+            if is_even_kernel:
+                top_bound_height += 1
+                top_bound_width += 1
+            
+            for col_in in range(offset-padding, top_bound_height, stride):
+                for row_in in range(offset-padding, top_bound_width, stride):
+                    # Indices of the output
+                    col_out = int((col_in - offset + padding)/stride)
+                    row_out = int((row_in - offset + padding)/stride)
+
+
+                    # Final matrix column indices is the relative position inside the output image
+                    final_matrix_col_indices.fill_(0)  # Resetting the tensor to zero
+                    first_idx = (col_out) * out_width + row_out
+                    num_elements_to_fill = (len(final_matrix_col_indices) - first_idx) // (output_image_kadenz) + 1
+                    fill_indices = first_idx + torch.arange(num_elements_to_fill) * (output_image_kadenz)
+                    # Clamp fill_indices to the length of final_matrix_col_indices to avoid index out of bounds
+                    fill_indices = fill_indices[fill_indices < len(final_matrix_col_indices)]
+                    # Fill in the tensor
+                    final_matrix_col_indices[fill_indices] = 1
+
+                    
+                    kernel_count_idx = 0
+                    top_col_bound = col_in + offset + 1
+                    top_row_bound = row_in + offset + 1
+                    if is_even_kernel:
+                        top_col_bound -= 1
+                        top_row_bound -= 1
+                    for kernel_col_idx in range(col_in - offset, top_col_bound):
+                        for kernel_row_idx in range(row_in - offset, top_row_bound):
+                            if kernel_col_idx < 0 or kernel_row_idx < 0 or kernel_col_idx >= in_height or kernel_row_idx >= in_width:
+                                kernel_count_idx += 1
+                                continue
+                    
+                            # Final matrix row index is the relative position inside the input image
+                            final_matrix_row_idx = (kernel_col_idx * in_width + kernel_row_idx) + (channel_in_idx * in_width * in_height)
+
+                            # Final matrix weight indices is the relative position inside the kernel -> kernel_count_idx
+                            # It has to be across the channels with kadenz of the kernel size
+                            final_matrix_weight_indices.fill_(0)  # Resetting the tensor to zero
+                            num_elements_to_fill = (len(final_matrix_weight_indices) - kernel_count_idx) // (kernel_size_kadenz) + 1
+                            fill_weight_indices = kernel_count_idx + torch.arange(num_elements_to_fill) * (kernel_size_kadenz)
+                            # Clamp fill_weight_indices to the length of final_matrix_weight_indices to avoid index out of bounds
+                            fill_weight_indices = fill_weight_indices[fill_weight_indices < len(final_matrix_weight_indices)]
+                            # Fill in the tensor
+                            final_matrix_weight_indices[fill_weight_indices] = 1
+
+                            weight_mask = final_matrix_weight_indices == 1
+                            # Select every in_channel'th element
+                            weight_mask = torch.arange(len(weight_mask))[weight_mask]
+                            weight_mask = weight_mask[channel_in_idx::in_channels]
+                            # Fill the matrix
+                            final_matrix[final_matrix_row_idx, final_matrix_col_indices == 1] = flattened_weights[weight_mask]
+
+                            kernel_count_idx += 1
+
+        print("time to compute mult (Olli): ", time.time()-start_time)
+        
+        if self.biases is None:
+            bias = torch.zeros(out_width * out_height * out_channels)
+        else:
+            bias = torch.repeat_interleave(self.biases, out_width * out_height)
+        return final_matrix.transpose(0,1), bias
 
     def backward(self, bound: AlgebraicBound) -> None:
         """
@@ -185,6 +241,50 @@ class Conv2DVerifier(Verifier):
         bound.lb_bias = bound.lb_bias + bound.lb_mult @ self.bias
         bound.ub_mult = bound.ub_mult @ self.mult
         bound.lb_mult = bound.lb_mult @ self.mult
-        print("time to compute backward: ", time.time()-now)
+        # padding=self.padding[0]
+        # stride=self.stride[0]
+        # kernel_size=self.kernel_size[0]
+        # in_channels=self.in_channels
+        # out_channels=self.out_channels
+        # weights = self.weights_unflattened
+        # out_channels = self.out_dims[0]
+        # out_height = self.out_dims[1]
+        # out_width = self.out_dims[2]
+        # in_height = self.previous.out_dims[1]
+        # in_width = self.previous.out_dims[2]
+        
+        # weights = self.weights_unflattened
+        # assert isinstance(padding, int) 
+        # padded_size = list(self.previous.out_dims)
+        # padded_size = [bound.lb_bias.size(0)] + padded_size
+        # padded_size[2] = padded_size[2] + 2 * padding
+        # padded_size[3] = padded_size[3] + 2 * padding
+        # bound.ub_mult = torch.reshape(bound.ub_mult, [bound.lb_bias.size(0)]+list(self.out_dims))
+        # bound.lb_mult = torch.reshape(bound.lb_mult, [bound.lb_bias.size(0)]+list(self.out_dims))
+        # im_ub = torch.zeros(padded_size)
+        # im_lb = torch.zeros(padded_size)
+        # for i_out in range(out_channels):
+        #     channel_weights = weights[i_out]
+        #     for i_h in range(out_height):
+        #         for i_w in range(out_width):
+        #             el_ub = bound.ub_mult[:,i_out,i_h,i_w]
+        #             el_lb = bound.lb_mult[:,i_out,i_h,i_w]
+        #             now1 = time.time()
+        #             im_ub[:,:,stride*i_h:stride*i_h+kernel_size, stride*i_w:stride*i_w+kernel_size] = im_ub[:,:,stride*i_h:stride*i_h+kernel_size, stride*i_w:stride*i_w+kernel_size] + el_ub.view(-1,1,1,1) * channel_weights
+        #             im_lb[:,:,stride*i_h:stride*i_h+kernel_size, stride*i_w:stride*i_w+kernel_size] = im_lb[:,:,stride*i_h:stride*i_h+kernel_size, stride*i_w:stride*i_w+kernel_size] + el_lb.view(-1,1,1,1) * channel_weights
+        #             print(time.time() - now1)
+        # if padding > 0:
+        #     im_ub = im_ub[:,:,padding:-padding,padding:-padding]
+        #     im_lb = im_lb[:,:,padding:-padding,padding:-padding]
+
+        # sum_ub = bound.ub_mult.sum(dim=[2,3])
+        # sum_lb = bound.lb_mult.sum(dim=[2,3])
+        # bias_r = self.biases.view(1,-1)
+        # bound.ub_bias = bound.ub_bias + (sum_ub * bias_r).sum(1)
+        # bound.lb_bias = bound.lb_bias + (sum_lb * bias_r).sum(1)
+
+        # bound.ub_mult = im_ub.reshape(im_ub.size(0),-1)
+        # bound.lb_mult = im_lb.reshape(im_ub.size(0),-1)
+        #print("time to compute backward: ", time.time()-now)
 
         return self.previous.backward(bound)

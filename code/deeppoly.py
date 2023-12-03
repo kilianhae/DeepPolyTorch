@@ -59,7 +59,7 @@ class DeepPoly(torch.nn.Module):
         lowest=-1
         if len(list(self.verifiers.parameters())) != 0 :
             opt = torch.optim.Adam(self.verifiers.parameters(), lr=1.5)
-            for i in range(0,10):
+            for i in range(0,1000):
                 opt.zero_grad()
                 final_bound = self.verifiers.forward(input_bound)
                 if lowest >= 0:
