@@ -8,8 +8,10 @@ In the directory `code`, you can find 3 files and one folder:
 - The file `verifier.py` contains the of the verifier function. It implements loading of the stored networks and test cases. As well as the `analyze` function which executes a DeepPoly convex relaxation.
 - The file `evaluate` will run all networks and specs currently in the repository. It follows the calling convention we will use for grading.
 - The folder `utils` contains helper methods for loading and initialization
-- The folder `code/verify` contains all the Layer-Specific verifyer class (implemented as torch Modules) as well as the Abstract class Verifier, in case you wish to add any specific layers this should give you a good template to build upon. If your verifier has any optimizable values make sure to specify them as torch Parameters.
 - In the directory `models`, you can find 14 neural networks (9 fully connected and 5 convolutional) weights. These networks are loaded using PyTorch in `verifier.py`. Note that we included two `_base` networks which do not contain activation functions.
+
+- The folder `code/verify` contains all the Layer-Specific verifyer class (implemented as torch Modules) as well as the Abstract class Verifier, in case you wish to add any specific layers this should give you a good template to build upon. If your verifier has any optimizable values make sure to specify them as torch Parameters.
+- In the file `code/deeppoly.py` you will find an example implementation of how to: Generate a Deeppoly Verfier from a pytorch network, how to optimize over verification parameters (using PGD with Adam) and how to run verification of samples.
 
 In the directory `test_cases`, you can find 13 subfolders (the folder for `fc_6` contains both examples for `cifar10` and `mnist`). Each subfolder is associated with one of the networks using the same name. In a subfolder corresponding to a network, you can find 2 test cases for each network. Note that for the base networks, we provide you with 5 test cases each. Also, as we use 2 different versions (mnist, cifar10) of `fc_6`, the corresponding folder contains 2 test cases per dataset. As explained in the lecture, these test cases **are not** part of the set of test cases that we will use for the final evaluation.
 
