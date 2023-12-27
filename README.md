@@ -1,4 +1,4 @@
-# RTAI 2023 Course Project
+# A torch native DeepPoly Verification Implementation (part of RTAI 2023 Course Project)
 
 
 
