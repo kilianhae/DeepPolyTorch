@@ -1,0 +1,15 @@
+activation:
+  # Activation function for the hidden layers
+  init: 0.5
+  standartization: "clamp"
+conv:
+linear:
+
+optimizer:
+  name: "Adam"
+  # Learning rate
+  params:
+    lr: 1.0
+
+wandb: false
+cache: true

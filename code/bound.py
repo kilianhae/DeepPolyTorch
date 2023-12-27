@@ -1,6 +1,8 @@
+"""Module defines the two Bound representations."""
 import torch
 
-class AlgebraicBound():
+
+class AlgebraicBound:
     """
     Represents the algebraic upper and lower bounds on the output vars of a layer.
 
@@ -11,13 +13,21 @@ class AlgebraicBound():
     ub_bias : Tensor of shape (verifier_in_forward_pass.output_size) representing the Upper Bounds of the output vars of the layer
     lb_bias : Tensor of shape (verifier_in_forward_pass.output_size) representing the Lower Bounds of the output vars of the layer
     """
-    def __init__(self, ub_mult: torch.Tensor, lb_mult: torch.Tensor, ub_bias: torch.Tensor, lb_bias: torch.Tensor) -> None:
+
+    def __init__(
+        self,
+        ub_mult: torch.Tensor,
+        lb_mult: torch.Tensor,
+        ub_bias: torch.Tensor,
+        lb_bias: torch.Tensor,
+    ) -> None:
         self.ub_mult = ub_mult
         self.lb_mult = lb_mult
         self.ub_bias = ub_bias
         self.lb_bias = lb_bias
 
-class Bound():
+
+class Bound:
     """
     Represents the numerical bounds of a layer.
 
@@ -26,6 +36,7 @@ class Bound():
     ub : Tensor of shape (Verifer.out_size) representing the Upper Bounds of the outputs of the layer
     lb : Tensor of shape (Verifer.out_size) representing the Lower Bounds of the outputs of the layer
     """
+
     def __init__(self, ub: torch.Tensor, lb: torch.Tensor) -> None:
         self.ub = ub
         self.lb = lb

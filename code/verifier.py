@@ -1,7 +1,9 @@
 import argparse
+import yaml
+from typing import Optional
 import torch
-from deeppoly import DeepPoly
 
+from deeppoly import DeepPoly
 from networks import get_network
 from utils.loading import parse_spec
 
@@ -9,21 +11,21 @@ DEVICE = "cpu"
 
 
 def analyze(
-    net: torch.nn.Module, inputs: torch.Tensor, eps: float, true_label: int
+    net: torch.nn.Module,
+    inputs: torch.Tensor,
+    eps: float,
+    true_label: int,
+    modelname: Optional[str] = None,
 ) -> bool:
-    
+    # load config from file
+    with open("config.yaml", "r") as f:
+        config = yaml.safe_load(f)  # type: ignore
+        config["modelname"] = modelname
     net.zero_grad()
-    
-    verifier = DeepPoly(net, true_label=true_label, input=inputs)
 
-    bound = verifier.forward(inputs, eps)
+    verifier = DeepPoly(model=net, true_label=true_label, input=inputs, config=config)  # type: ignore
 
-    print(bound.lb)
-    print(bound.ub)
-    if bound.lb.min() < 0:
-        return False  # We verified the image
-
-    return True
+    return verifier.verify(inputs, eps)
 
 
 def main():
@@ -66,7 +68,7 @@ def main():
     pred_label = out.max(dim=1)[1].item()
     assert pred_label == true_label
 
-    if analyze(net, image, eps, true_label):
+    if analyze(net, image, eps, true_label, str(args.net)):
         print("verified")
     else:
         print("not verified")
